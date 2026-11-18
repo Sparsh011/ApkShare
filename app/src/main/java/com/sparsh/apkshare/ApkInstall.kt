@@ -9,6 +9,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageInstaller
 import android.net.Uri
+import android.os.BadParcelableException
 import android.provider.OpenableColumns
 import androidx.annotation.StringRes
 import java.io.IOException
@@ -25,12 +26,30 @@ import kotlinx.coroutines.withContext
 private const val APK_TYPE = "application/vnd.android.package-archive"
 private const val ZIP_TYPE = "application/zip"
 private const val ALT_ZIP_TYPE = "application/x-zip-compressed"
+private const val BINARY_TYPE = "application/octet-stream"
 private const val INSTALL_STATUS_ACTION = "com.sparsh.apkshare.INSTALL_STATUS"
 private const val SESSION_ID = "com.sparsh.apkshare.SESSION_ID"
 
-internal val installDocumentTypes = arrayOf(APK_TYPE, ZIP_TYPE, ALT_ZIP_TYPE, "application/octet-stream")
+internal val installDocumentTypes = arrayOf(APK_TYPE, ZIP_TYPE, ALT_ZIP_TYPE, BINARY_TYPE)
+
+internal fun Intent.sharedZipUri(): Uri? {
+    if (action != Intent.ACTION_SEND) return null
+    when (Intent.normalizeMimeType(type)) {
+        ZIP_TYPE, ALT_ZIP_TYPE, BINARY_TYPE -> Unit
+        else -> return null
+    }
+    val uri = try {
+        getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
+            ?: clipData?.takeIf { it.itemCount == 1 }?.getItemAt(0)?.uri
+    } catch (_: BadParcelableException) {
+        return null
+    }
+    return uri?.takeIf { it.scheme == ContentResolver.SCHEME_CONTENT && !it.authority.isNullOrEmpty() }
+}
 
 internal sealed interface InstallState {
+    val canStart: Boolean get() = this is Idle || this is Finished
+
     data object Idle : InstallState
     data object Preparing : InstallState
     data class Waiting(val sessionId: Int) : InstallState
@@ -44,8 +63,8 @@ internal object ApkInstallation {
     private val mutableState = MutableStateFlow<InstallState>(InstallState.Idle)
     val state = mutableState.asStateFlow()
 
-    fun start(context: Context, document: Uri) {
-        if (state.value !is InstallState.Idle && state.value !is InstallState.Finished) return
+    fun start(context: Context, document: Uri, sharedZip: Boolean = false): Boolean {
+        if (!state.value.canStart) return false
         mutableState.value = InstallState.Preparing
         val app = context.applicationContext
         scope.launch {
@@ -61,7 +80,7 @@ internal object ApkInstallation {
                 }
                 sessionId = id
                 withContext(Dispatchers.IO) {
-                    installer.openSession(id).use { it.stageDocument(app.contentResolver, document) }
+                    installer.openSession(id).use { it.stageDocument(app.contentResolver, document, sharedZip) }
                 }
 
                 val callback = PendingIntent.getBroadcast(
@@ -91,6 +110,7 @@ internal object ApkInstallation {
                 fail(installer, sessionId, R.string.install_failed, exception.message)
             }
         }
+        return true
     }
 
     fun confirm(activity: Activity) {
@@ -155,19 +175,8 @@ class InstallStatusReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) = ApkInstallation.onStatus(context, intent)
 }
 
-private fun PackageInstaller.Session.stageDocument(resolver: ContentResolver, uri: Uri) {
-    val name = resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
-        if (cursor.moveToFirst()) cursor.getString(0) else null
-    }
-    val asZip = when {
-        name?.endsWith(".zip", ignoreCase = true) == true -> true
-        name?.endsWith(".apk", ignoreCase = true) == true -> false
-        else -> when (resolver.getType(uri)) {
-            ZIP_TYPE, ALT_ZIP_TYPE -> true
-            APK_TYPE -> false
-            else -> throw IOException("Select an APK or ZIP file.")
-        }
-    }
+private fun PackageInstaller.Session.stageDocument(resolver: ContentResolver, uri: Uri, sharedZip: Boolean) {
+    val asZip = sharedZip || resolver.isZipDocument(uri)
     val stream = resolver.openInputStream(uri) ?: throw IOException("Could not open the selected file.")
     if (asZip) {
         ZipInputStream(stream.buffered()).use { archive ->
@@ -184,6 +193,21 @@ private fun PackageInstaller.Session.stageDocument(resolver: ContentResolver, ur
         }
     } else {
         stream.use { stageApk("base.apk", it) }
+    }
+}
+
+private fun ContentResolver.isZipDocument(uri: Uri): Boolean {
+    val name = query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+        if (cursor.moveToFirst()) cursor.getString(0) else null
+    }
+    return when {
+        name?.endsWith(".zip", ignoreCase = true) == true -> true
+        name?.endsWith(".apk", ignoreCase = true) == true -> false
+        else -> when (getType(uri)) {
+            ZIP_TYPE, ALT_ZIP_TYPE -> true
+            APK_TYPE -> false
+            else -> throw IOException("Select an APK or ZIP file.")
+        }
     }
 }
 

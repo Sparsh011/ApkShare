@@ -16,6 +16,10 @@ Apps installed as multiple APKs are shared as a ZIP containing `base.apk` and ev
 
 ## Install on the receiving phone
 
+To install a ZIP directly from another app, open its **Share** menu and choose **ApkShare**. If prompted, tap **Install shared ZIP** and allow installs from ApkShare in Android settings. Then tap **Continue to installer** and approve Android’s prompt.
+
+You can also pick a saved file inside ApkShare.
+
 1. Save the received APK or ZIP and open ApkShare on the receiving phone.
 2. Tap **Install APK or ZIP**. If Android asks, allow ApkShare to install unknown apps, then return to ApkShare.
 3. Select the received file. For a split app, choose the entire ZIP.

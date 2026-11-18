@@ -13,6 +13,9 @@
     <string name="share_error">Couldn’t share %1$s. Try again.</string>
     <string name="app_removed">%1$s is no longer installed.</string>
     <string name="install_apk_or_zip">Install APK or ZIP</string>
+    <string name="install_shared_zip">Install shared ZIP</string>
+    <string name="install_shared_zip_invalid">Share a ZIP file to ApkShare.</string>
+    <string name="install_shared_zip_busy">Finish or cancel the current installation, then share the ZIP again.</string>
     <string name="install_picker_unavailable">No file picker is available.</string>
     <string name="install_permission_required">Allow installs from ApkShare in Android settings to continue.</string>
     <string name="install_preparing">Preparing installation…</string>

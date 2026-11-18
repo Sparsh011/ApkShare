@@ -58,18 +58,60 @@ import com.sparsh.apkshare.ui.theme.ApkShareTheme
 import java.io.IOException
 import kotlinx.coroutines.launch
 
+private const val SAVED_PICKER_OPEN = "picker_open"
+private const val SAVED_SHARED_ZIP = "shared_zip"
+
 class MainActivity : ComponentActivity() {
+    private var pickerOpen by mutableStateOf(false)
+    private var sharedZip by mutableStateOf<Uri?>(null)
+    private var incomingShareError by mutableStateOf<Int?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (savedInstanceState == null) {
+            receiveShare(intent)
+        } else {
+            pickerOpen = savedInstanceState.getBoolean(SAVED_PICKER_OPEN)
+            sharedZip = savedInstanceState.getParcelable(SAVED_SHARED_ZIP, Uri::class.java)
+        }
         enableEdgeToEdge()
         setContent {
             ApkShareTheme { ApkShareScreen() }
         }
     }
 
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        receiveShare(intent)
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putBoolean(SAVED_PICKER_OPEN, pickerOpen)
+        outState.putParcelable(SAVED_SHARED_ZIP, sharedZip)
+        super.onSaveInstanceState(outState)
+    }
+
+    private fun receiveShare(intent: Intent) {
+        if (intent.action != Intent.ACTION_SEND) return
+        pickerOpen = false
+        val zip = intent.sharedZipUri()
+        incomingShareError = when {
+            zip == null -> R.string.install_shared_zip_invalid
+            !ApkInstallation.state.value.canStart -> R.string.install_shared_zip_busy
+            else -> {
+                sharedZip = zip
+                null
+            }
+        }
+    }
+
+    private fun installSharedZip() {
+        val zip = sharedZip ?: return
+        if (ApkInstallation.start(this, zip, sharedZip = true)) sharedZip = null
+    }
+
     @Composable
     private fun ApkShareScreen() {
-        var pickerOpen by rememberSaveable { mutableStateOf(false) }
         var query by rememberSaveable { mutableStateOf("") }
         var shareAsZip by rememberSaveable { mutableStateOf(false) }
         var apps by remember { mutableStateOf<List<InstalledApp>?>(null) }
@@ -151,6 +193,7 @@ class MainActivity : ComponentActivity() {
     private fun InstallControls() {
         val installState by ApkInstallation.state.collectAsState()
         var pickerError by rememberSaveable { mutableStateOf<Int?>(null) }
+        var permissionForSharedZip by rememberSaveable { mutableStateOf(false) }
         val documentPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { document ->
             if (document != null) ApkInstallation.start(this, document)
         }
@@ -162,18 +205,31 @@ class MainActivity : ComponentActivity() {
             }
         }
         val unknownSources = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
-            if (packageManager.canRequestPackageInstalls()) chooseFile()
-            else pickerError = R.string.install_permission_required
+            if (packageManager.canRequestPackageInstalls()) {
+                if (sharedZip != null) installSharedZip()
+                else if (!permissionForSharedZip) chooseFile()
+            } else {
+                pickerError = R.string.install_permission_required
+            }
+        }
+
+        LaunchedEffect(sharedZip) {
+            if (sharedZip != null) {
+                pickerError = null
+                if (packageManager.canRequestPackageInstalls()) installSharedZip()
+            }
         }
 
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(
-                enabled = installState is InstallState.Idle || installState is InstallState.Finished,
+                enabled = installState.canStart,
                 onClick = {
                     pickerError = null
+                    incomingShareError = null
                     if (packageManager.canRequestPackageInstalls()) {
-                        chooseFile()
+                        if (sharedZip != null) installSharedZip() else chooseFile()
                     } else {
+                        permissionForSharedZip = sharedZip != null
                         try {
                             val source = Uri.fromParts("package", packageName, null)
                             unknownSources.launch(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, source))
@@ -182,7 +238,18 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                 },
-            ) { Text(stringResource(R.string.install_apk_or_zip)) }
+            ) {
+                val label = if (sharedZip != null) R.string.install_shared_zip else R.string.install_apk_or_zip
+                Text(stringResource(label))
+            }
+            if (sharedZip != null) {
+                TextButton(onClick = {
+                    sharedZip = null
+                    pickerError = null
+                }) { Text(stringResource(R.string.install_cancel)) }
+            }
+
+            incomingShareError?.let { Text(stringResource(it), style = MaterialTheme.typography.bodyMedium) }
 
             val error = pickerError
             if (error != null) {

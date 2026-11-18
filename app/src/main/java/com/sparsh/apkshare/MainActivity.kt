@@ -3,11 +3,15 @@ package com.sparsh.apkshare
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Bundle
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -18,12 +22,15 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -33,6 +40,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -118,7 +126,9 @@ class MainActivity : ComponentActivity() {
                     )
                 } else {
                     Column(
-                        modifier = Modifier.align(Alignment.Center).padding(24.dp),
+                        modifier = Modifier.align(Alignment.Center)
+                            .verticalScroll(rememberScrollState())
+                            .padding(24.dp),
                         verticalArrangement = Arrangement.spacedBy(16.dp),
                     ) {
                         Text(stringResource(R.string.app_name), style = MaterialTheme.typography.headlineMedium)
@@ -130,6 +140,76 @@ class MainActivity : ComponentActivity() {
                         }) {
                             Text(stringResource(R.string.share_apk_file))
                         }
+                        InstallControls()
+                    }
+                }
+            }
+        }
+    }
+
+    @Composable
+    private fun InstallControls() {
+        val installState by ApkInstallation.state.collectAsState()
+        var pickerError by rememberSaveable { mutableStateOf<Int?>(null) }
+        val documentPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { document ->
+            if (document != null) ApkInstallation.start(this, document)
+        }
+        fun chooseFile() {
+            try {
+                documentPicker.launch(installDocumentTypes)
+            } catch (_: ActivityNotFoundException) {
+                pickerError = R.string.install_picker_unavailable
+            }
+        }
+        val unknownSources = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+            if (packageManager.canRequestPackageInstalls()) chooseFile()
+            else pickerError = R.string.install_permission_required
+        }
+
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(
+                enabled = installState is InstallState.Idle || installState is InstallState.Finished,
+                onClick = {
+                    pickerError = null
+                    if (packageManager.canRequestPackageInstalls()) {
+                        chooseFile()
+                    } else {
+                        try {
+                            val source = Uri.fromParts("package", packageName, null)
+                            unknownSources.launch(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, source))
+                        } catch (_: ActivityNotFoundException) {
+                            pickerError = R.string.install_permission_required
+                        }
+                    }
+                },
+            ) { Text(stringResource(R.string.install_apk_or_zip)) }
+
+            val error = pickerError
+            if (error != null) {
+                Text(stringResource(error), style = MaterialTheme.typography.bodyMedium)
+            } else {
+                when (val state = installState) {
+                    InstallState.Idle -> Unit
+                    InstallState.Preparing, is InstallState.Waiting -> {
+                        LinearProgressIndicator(Modifier.fillMaxWidth())
+                        val message = when (state) {
+                            InstallState.Preparing -> R.string.install_preparing
+                            else -> R.string.install_waiting
+                        }
+                        Text(stringResource(message), style = MaterialTheme.typography.bodyMedium)
+                    }
+                    is InstallState.Review -> {
+                        Text(stringResource(R.string.install_review))
+                        Button(onClick = { ApkInstallation.confirm(this@MainActivity) }) {
+                            Text(stringResource(R.string.install_continue))
+                        }
+                        TextButton(onClick = { ApkInstallation.cancel(this@MainActivity) }) {
+                            Text(stringResource(R.string.install_cancel))
+                        }
+                    }
+                    is InstallState.Finished -> {
+                        Text(stringResource(state.message), style = MaterialTheme.typography.bodyMedium)
+                        if (!state.details.isNullOrBlank()) Text(state.details, style = MaterialTheme.typography.bodySmall)
                     }
                 }
             }

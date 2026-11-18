@@ -1,0 +1,15 @@
+<resources>
+    <string name="app_name">ApkShare</string>
+    <string name="share_apk_file">Share APK file</string>
+    <string name="share_description">Choose an installed app and send its APK using your phone’s share menu.</string>
+    <string name="installed_apps">Installed apps</string>
+    <string name="back">Back</string>
+    <string name="search_apps">Search apps</string>
+    <string name="share_as_zip">Share APKs as ZIP</string>
+    <string name="no_apps">No installed APKs found.</string>
+    <string name="no_matches">No apps match your search.</string>
+    <string name="split_package">Split APKs · Shared as ZIP</string>
+    <string name="preparing_share">Preparing file…</string>
+    <string name="share_error">Couldn’t share %1$s. Try again.</string>
+    <string name="app_removed">%1$s is no longer installed.</string>
+</resources>
